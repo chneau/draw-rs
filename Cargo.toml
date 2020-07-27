@@ -1,0 +1,17 @@
+[package]
+name = "draw-rs"
+version = "0.1.0"
+authors = ["Charles Neau <charles63500@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "0.2.22", features = ["full"] }
+warp = "0.2.4"
+log = "0.4.11"
+pretty_env_logger = "0.4.0"
+futures = "0.3.5"
+
+# rayon = "1.3.1"
+# typed-arena = "2.0.1"
