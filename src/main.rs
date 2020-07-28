@@ -3,7 +3,7 @@ use warp::ws::WebSocket;
 use warp::Filter;
 
 #[derive(Debug, Clone, Copy)]
-struct Manager {}
+struct Manager {} // TODO: add a list of tx
 
 impl Manager {
     async fn handle_ws(self, ws: WebSocket) {
@@ -20,6 +20,7 @@ impl Manager {
                 },
                 None => return,
             };
+            // TODO: send to list of tx, if it fails, remove tx.
             println!("{:?}", msg)
         }
     }
@@ -46,7 +47,7 @@ async fn main() {
     let wsconn = warp::path("ws").and(warp::ws()).map(|ws: warp::ws::Ws| {
         let res = ws.on_upgrade(|websocket: WebSocket| {
             let res = handle_ws(websocket);
-            // let res = manager.handle_ws(websocket);
+            // let res = manager.handle_ws(websocket); // TODO: can't figure out how to put it here ...
             res
         });
         res
@@ -54,4 +55,12 @@ async fn main() {
     warp::serve(wsconn.or(home))
         .run(([127, 0, 0, 1], 8000))
         .await;
+    /*
+    In case this is total crap here is the story:
+    A user open the web page.
+    websockets connect.
+    websocket (TX) is saved on a collection.
+    websocket (RX) is listened to and dispatched to others.
+    if dispatch fail, remove tx from collection.
+    */
 }
