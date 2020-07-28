@@ -1,66 +1,76 @@
-use futures::StreamExt;
-use warp::ws::WebSocket;
-use warp::Filter;
+use futures::prelude::*;
+use gotham::hyper::{Body, HeaderMap, Response, StatusCode};
+use gotham::state::{request_id, FromState, State};
 
-#[derive(Debug, Clone, Copy)]
-struct Manager {} // TODO: add a list of tx
+mod ws;
 
-impl Manager {
-    async fn handle_ws(self, ws: WebSocket) {
-        let (_tx, mut rx) = ws.split();
-        // let fut = rx.forward(tx).map(|_| ());
-        loop {
-            let msg = match rx.next().await {
-                Some(x) => match x {
-                    Ok(x) => match x.to_str() {
-                        Ok(x) => x.to_owned(),
-                        Err(_) => return,
-                    },
-                    Err(_) => return,
-                },
-                None => return,
-            };
-            // TODO: send to list of tx, if it fails, remove tx.
-            println!("{:?}", msg)
+fn main() {
+    pretty_env_logger::init();
+
+    let addr = "127.0.0.1:7878";
+    println!("Listening on http://{}/", addr);
+
+    gotham::start(addr, || Ok(handler));
+}
+
+fn handler(mut state: State) -> (State, Response<Body>) {
+    let body = Body::take_from(&mut state);
+    let headers = HeaderMap::take_from(&mut state);
+    // let mut all_ws = Mutex::new(vec![]);
+    if ws::requested(&headers) {
+        let (response, ws) = match ws::accept(&headers, body) {
+            Ok(res) => res,
+            Err(_) => return (state, bad_request()),
+        };
+
+        let req_id = request_id(&state).to_owned();
+        let ws = ws
+            .map_err(|err| eprintln!("websocket init error: {}", err))
+            .and_then(move |ws| connected(req_id, ws));
+
+        tokio::spawn(ws);
+
+        (state, response)
+    } else {
+        (state, Response::new(Body::from(INDEX_HTML)))
+    }
+}
+
+async fn connected<S>(req_id: String, stream: S) -> Result<(), ()>
+where
+    S: Stream<Item = Result<ws::Message, ws::Error>> + Sink<ws::Message, Error = ws::Error>,
+{
+    let (mut sink, mut stream) = stream.split();
+
+    println!("Client {} connected", req_id);
+
+    while let Some(message) = stream
+        .next()
+        .await
+        .transpose()
+        .map_err(|error| println!("Websocket receive error: {}", error))?
+    {
+        // println!("{}: {:?}", req_id, message);
+        match sink.send(message).await {
+            Ok(()) => (),
+            // this error indicates a successfully closed connection
+            Err(ws::Error::ConnectionClosed) => break,
+            Err(error) => {
+                println!("Websocket send error: {}", error);
+                return Err(());
+            }
         }
     }
+
+    println!("Client {} disconnected", req_id);
+    Ok(())
 }
 
-async fn handle_ws(ws: WebSocket) {
-    let (tx, mut rx) = ws.split();
-    // let fut = rx.forward(tx).map(|_| ());
-    loop {
-        let msg = match rx.next().await {
-            Some(x) => x,
-            None => return,
-        };
-        let msg = if let Ok(x) = msg { x } else { return };
-        println!("{:?}", msg)
-    }
+fn bad_request() -> Response<Body> {
+    Response::builder()
+        .status(StatusCode::BAD_REQUEST)
+        .body(Body::empty())
+        .unwrap()
 }
 
-#[tokio::main]
-async fn main() {
-    let manager = Manager {};
-    // let manager = Arc::new(manager);
-    let home = warp::path("static").and(warp::fs::dir("static"));
-    let wsconn = warp::path("ws").and(warp::ws()).map(|ws: warp::ws::Ws| {
-        let res = ws.on_upgrade(|websocket: WebSocket| {
-            let res = handle_ws(websocket);
-            // let res = manager.handle_ws(websocket); // TODO: can't figure out how to put it here ...
-            res
-        });
-        res
-    });
-    warp::serve(wsconn.or(home))
-        .run(([127, 0, 0, 1], 8000))
-        .await;
-    /*
-    In case this is total crap here is the story:
-    A user open the web page.
-    websockets connect.
-    websocket (TX) is saved on a collection.
-    websocket (RX) is listened to and dispatched to others.
-    if dispatch fail, remove tx from collection.
-    */
-}
+const INDEX_HTML: &str = include_str!("../static/index.html");
